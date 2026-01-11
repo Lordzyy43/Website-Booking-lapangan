@@ -121,6 +121,55 @@ class ScheduleController extends Controller
         }
     }
 
+    public function generate(Request $request)
+    {
+        $validated = $request->validate([
+            'field_id'   => 'required|exists:fields,id',
+            'date'       => 'required|date|after_or_equal:today',
+            'start_hour' => 'required|integer|min:0|max:23',
+            'end_hour'   => 'required|integer|min:0|max:23|gt:start_hour',
+        ]);
+
+        try {
+            $date = $validated['date'];
+            $fieldId = $validated['field_id'];
+            $createdCount = 0;
+            $skippedCount = 0;
+
+            // Loop dari jam mulai sampai jam selesai
+            for ($hour = $validated['start_hour']; $hour < $validated['end_hour']; $hour++) {
+                $startTime = sprintf('%s %02d:00:00', $date, $hour);
+                $endTime   = sprintf('%s %02d:00:00', $date, $hour + 1);
+
+                // Cek apakah slot sudah ada agar tidak duplikat (Unique Constraint Safe)
+                $exists = Schedule::where('field_id', $fieldId)
+                    ->where('start_time', $startTime)
+                    ->exists();
+
+                if (!$exists) {
+                    Schedule::create([
+                        'field_id'   => $fieldId,
+                        'start_time' => $startTime,
+                        'end_time'   => $endTime,
+                        'status'     => 'available',
+                    ]);
+                    $createdCount++;
+                } else {
+                    $skippedCount++;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => "Berhasil generate $createdCount slot. ($skippedCount slot dilewati karena sudah ada)",
+            ], 201);
+
+        } catch (\Throwable $e) {
+            Log::error('Schedule generate error', ['message' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Gagal generate jadwal'], 500);
+        }
+    }
+
     // ==========================================================
     // PUT /schedules/{schedule}
     // Update schedule (ADMIN ONLY)
