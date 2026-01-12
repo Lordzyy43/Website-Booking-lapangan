@@ -95,4 +95,5 @@ class Schedule extends Model
     {
         return $this->hasOne(BookingItem::class);
     }
+
 }

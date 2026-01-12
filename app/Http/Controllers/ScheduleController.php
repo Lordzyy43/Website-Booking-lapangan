@@ -19,8 +19,8 @@ class ScheduleController extends Controller
      */
     public function __construct()
     {
-        $this->middleware('auth:sanctum');
-        $this->middleware('role:admin')->except(['index', 'show']);
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'availableSchedules']);
+        $this->middleware('role:admin')->except(['index', 'show', 'availableSchedules']);
     }
 
     // ==========================================================
@@ -59,6 +59,75 @@ class ScheduleController extends Controller
             'data' => $schedule->load('field.venue'),
         ], 200);
     }
+
+    public function availableSchedules($fieldId, Request $request)
+    {
+        $request->validate([
+            'date' => 'required|date',
+            'start_hour' => 'nullable|integer|min:0|max:23',
+            'end_hour'   => 'nullable|integer|min:0|max:23',
+        ]);
+
+        $date = $request->date;
+        $startHour = $request->start_hour ?? 7;   // default 07:00
+        $endHour   = $request->end_hour ?? 22;    // default 22:00
+
+        try {
+            // Ambil jadwal yang sudah ada beserta relasi field & venue
+            $schedules = Schedule::with('field.venue')
+                ->where('field_id', $fieldId)
+                ->whereDate('start_time', $date)
+                ->orderBy('start_time')
+                ->get();
+
+            // Jika belum ada jadwal, generate slot kosong
+            if ($schedules->isEmpty()) {
+                for ($hour = $startHour; $hour < $endHour; $hour++) {
+                    $startTime = sprintf('%s %02d:00:00', $date, $hour);
+                    $endTime   = sprintf('%s %02d:00:00', $date, $hour + 1);
+
+                    $slot = Schedule::create([
+                        'field_id'   => $fieldId,
+                        'start_time' => $startTime,
+                        'end_time'   => $endTime,
+                        'status'     => 'available',
+                    ]);
+
+                    // reload relasi agar price & venue bisa diakses
+                    $slot->load('field.venue');
+                    $schedules->push($slot);
+                }
+            }
+
+            // Format response bersih termasuk price dari field
+            $response = $schedules->map(function ($slot) {
+                return [
+                    'id'         => $slot->id,
+                    'start_time' => $slot->start_time->format('H:i'),
+                    'end_time'   => $slot->end_time->format('H:i'),
+                    'status'     => $slot->status,
+                    'price'      => $slot->field->price_per_hour ?? 0, // <-- tambahan price
+                    'is_locked'  => $slot->isLocked(),
+                    'is_booked'  => $slot->isBooked(),
+                    'can_lock'   => $slot->canBeLocked(),
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $response,
+            ], 200);
+
+        } catch (\Throwable $e) {
+            \Log::error('Fetch available schedules error', ['message' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil jadwal',
+            ], 500);
+        }
+    }
+
+
 
     // ==========================================================
     // POST /schedules

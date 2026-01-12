@@ -5,7 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Booking;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\DB; // Import DB Facade
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class AdminBookingController extends Controller
 {
@@ -14,11 +15,12 @@ class AdminBookingController extends Controller
         $this->middleware(['auth:sanctum', 'role:admin']);
     }
 
+    /**
+     * GET /admin/bookings
+     */
     public function index()
     {
         try {
-            // Eager Loading 'items.schedule.field.venue' sangat krusial agar 
-            // detail lapangan muncul di Frontend tanpa query berulang (N+1 Problem)
             $bookings = Booking::with(['user', 'items.schedule.field.venue'])
                 ->latest()
                 ->get();
@@ -28,55 +30,91 @@ class AdminBookingController extends Controller
                 'data' => $bookings
             ], 200);
         } catch (\Throwable $e) {
-            Log::error('admin fetch bookings error: ' . $e->getMessage());
+            Log::error('AdminBookingController@index error: ' . $e->getMessage());
             return response()->json(['success' => false, 'message' => 'Gagal mengambil data booking'], 500);
         }
     }
 
+    /**
+     * POST /admin/bookings/{booking}/confirm
+     * Konfirmasi booking (status paid) - IMPROVED VERSION
+     */
     public function confirm(Booking $booking)
     {
-        // 1. Cek status awal (Early Return)
-        if ($booking->payment_status === 'paid') {
+        // Validasi status agar tidak double confirm
+        if ($booking->isPaid()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Booking ini sudah berstatus PAID sebelumnya.'
+                'message' => 'Booking ini sudah berstatus PAID.'
             ], 422);
         }
 
-        // 2. Gunakan Database Transaction untuk menjaga integritas data
-        // Jika salah satu proses di dalam closure gagal, semua perubahan dibatalkan (Rollback)
+        try {
+            // Panggil fungsi "Sakti" dari Model Booking.php
+            // Ini otomatis handle DB::transaction dan update schedule status
+            $booking->markAsPaid();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Booking berhasil dikonfirmasi secara real-time!',
+                'data' => $booking->load('items.schedule.field.venue')
+            ], 200);
+
+        } catch (\Throwable $e) {
+            Log::error('AdminBookingController@confirm failed: ' . $e->getMessage());
+            return response()->json([
+                'success' => false, 
+                'message' => 'Gagal mengonfirmasi pembayaran'
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /admin/bookings/{booking}/reject
+     * Tolak booking dan kembalikan slot lapangan
+     */
+    public function reject(Booking $booking)
+    {
+        // Hanya yang status pending (sudah upload bukti) yang bisa ditolak/verifikasi
+        if ($booking->payment_status !== 'pending') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Hanya booking berstatus PENDING yang bisa diproses.'
+            ], 422);
+        }
+
         return DB::transaction(function () use ($booking) {
             try {
-                // Update header booking
-                $booking->update([
-                    'payment_status' => 'paid',
-                ]);
+                // 1. Hapus bukti pembayaran fisik dari storage
+                if ($booking->payment_proof) {
+                    Storage::disk('public')->delete($booking->payment_proof);
+                }
 
-                // Update status setiap slot jadwal yang dipesan
+                // 2. Kembalikan status slot ke available (Real-time unlock)
                 foreach ($booking->items as $item) {
-                    // Pastikan relasi schedule tersedia
                     if ($item->schedule) {
                         $item->schedule->update([
-                            'status' => 'booked',
-                            'locked_until' => null, // Melepas kunci checkout karena sudah sah dibayar
+                            'status' => 'available',
+                            'locked_until' => null,
                         ]);
                     }
                 }
 
+                // 3. Reset header booking
+                $booking->update([
+                    'payment_status' => 'unpaid',
+                    'payment_proof' => null,
+                ]);
+
                 return response()->json([
                     'success' => true,
-                    'message' => 'Booking berhasil dikonfirmasi dan slot lapangan telah dikunci.',
+                    'message' => 'Booking ditolak, slot lapangan telah dibuka kembali.',
                     'data' => $booking->load('items.schedule.field.venue')
                 ], 200);
 
             } catch (\Throwable $e) {
-                Log::error('Admin confirm booking transaction failed', [
-                    'booking_id' => $booking->id,
-                    'error' => $e->getMessage()
-                ]);
-
-                // Exception di sini akan memicu DB::transaction untuk melakukan rollback otomatis
-                throw $e; 
+                Log::error('AdminBookingController@reject failed: ' . $e->getMessage());
+                throw $e;
             }
         });
     }

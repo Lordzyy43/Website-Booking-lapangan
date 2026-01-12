@@ -27,22 +27,36 @@ class FieldController extends Controller
     // GET /fields
     // List all fields (ALL ROLES)
     // ==========================================================
-    public function index()
+   public function index()
     {
         try {
-            $fields = Field::with('venue')->latest()->get();
+            $fields = Field::with('venue')->get(); 
+            $data = $fields->map(function ($field) {
+                return [
+                    'id'             => $field->id,
+                    'name'           => $field->name,
+                    'type'           => $field->type, // Pastikan dikirim agar tidak hilang
+                    'venue'          => [
+                        'id'         => $field->venue->id,
+                        'name'       => $field->venue->name,
+                        'address'    => $field->venue->address,
+                    ],
+                    // MATCH-KAN DISINI
+                    'price'          => $field->price_per_hour, 
+                    'status'         => $field->is_active ? 'active' : 'inactive', 
+                ];
+            });
+
             return response()->json([
                 'success' => true,
-                'data' => $fields,
+                'data'    => $data,
             ], 200);
         } catch (\Throwable $e) {
-            Log::error('Field index error', ['message' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Gagal mengambil data field',
-            ], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
+
+
 
     // ==========================================================
     // GET /fields/{field}
