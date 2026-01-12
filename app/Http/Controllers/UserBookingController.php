@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class UserBookingController extends Controller
 {
@@ -17,7 +18,8 @@ class UserBookingController extends Controller
     }
 
     /**
-     * Mengambil riwayat booking user yang sedang login
+     * GET /user/bookings/my
+     * Ambil riwayat booking user yang login
      */
     public function index()
     {
@@ -31,48 +33,49 @@ class UserBookingController extends Controller
                 'success' => true,
                 'data' => $bookings
             ], 200);
+
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+            Log::error('UserBookingController@index error', [
+                'user_id' => auth()->id(),
+                'message' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil data booking'
+            ], 500);
         }
     }
 
     /**
-     * Proses Simpan Booking (Checkout)
+     * POST /user/bookings
+     * Buat booking baru
      */
     public function store(Request $request)
     {
-        // 1. Validasi Input Dasar
         $request->validate([
             'schedule_ids' => 'required|array|min:1',
             'schedule_ids.*' => 'exists:schedules,id',
         ]);
 
         try {
-            // Gunakan Transaction agar jika salah satu gagal, semua dibatalkan
             return DB::transaction(function () use ($request) {
-                
-                // 2. Ambil data schedule dan kunci baris (lockForUpdate) untuk mencegah Race Condition
                 $schedules = Schedule::with('field')
                     ->whereIn('id', $request->schedule_ids)
-                    ->lockForUpdate() 
+                    ->lockForUpdate()
                     ->get();
 
-                // 3. Validasi: Pastikan SEMUA slot yang dipilih berstatus 'available'
                 foreach ($schedules as $s) {
                     if ($s->status !== 'available') {
                         return response()->json([
                             'success' => false,
-                            'message' => "Slot jam " . date('H:i', strtotime($s->start_time)) . " sudah tidak tersedia. Silakan pilih jam lain."
+                            'message' => "Slot jam " . date('H:i', strtotime($s->start_time)) . " sudah tidak tersedia."
                         ], 422);
                     }
                 }
 
-                // 4. Hitung Total Harga
-                $totalAmount = $schedules->sum(function($s) {
-                    return $s->field->price_per_hour;
-                });
+                $totalAmount = $schedules->sum(fn($s) => $s->field->price_per_hour);
 
-                // 5. Buat Header Booking
                 $booking = Booking::create([
                     'user_id' => auth()->id(),
                     'booking_code' => 'BK-' . strtoupper(Str::random(8)),
@@ -81,29 +84,198 @@ class UserBookingController extends Controller
                     'expired_at' => now()->addHours(2),
                 ]);
 
-                // 6. Buat Detail Item & Update Status Slot
                 foreach ($schedules as $s) {
                     $booking->items()->create([
                         'schedule_id' => $s->id,
-                        'price' => $s->field->price_per_hour, // Snapshot harga saat ini
+                        'price' => $s->field->price_per_hour,
                     ]);
-
-                    // Ubah status menjadi booked
-                    $s->update(['status' => 'booked']); 
+                    $s->update(['status' => 'booked']);
                 }
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Booking berhasil dibuat! Silakan cek menu Riwayat untuk konfirmasi pembayaran.',
+                    'message' => 'Booking berhasil dibuat!',
                     'data' => $booking->load('items.schedule.field.venue')
                 ], 201);
             });
-
         } catch (\Exception $e) {
-            Log::error("Booking Store Error: " . $e->getMessage());
+            Log::error("UserBookingController@store error: " . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan sistem saat memproses booking.'
+            ], 500);
+        }
+    }
+
+    /**
+     * GET /user/bookings/{booking}
+     * Detail booking by ID
+     */
+    public function show(Booking $booking)
+    {
+        try {
+            if ($booking->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Booking tidak ditemukan'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $booking->load('items.schedule.field.venue')
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error("UserBookingController@show error: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil detail booking'
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /user/bookings/{booking}/upload-payment
+     * Upload bukti pembayaran
+     */
+    public function uploadPayment(Request $request, Booking $booking)
+    {
+        try {
+            if ($booking->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Booking tidak ditemukan'
+                ], 404);
+            }
+
+            if (!in_array($booking->payment_status, ['unpaid', 'pending'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Booking tidak dapat diupload pembayarannya'
+                ], 422);
+            }
+
+            $request->validate([
+                'payment_proof' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
+            ]);
+
+            if ($booking->payment_proof) {
+                // Hapus bukti pembayaran lama jika ada
+                Storage::disk('public')->delete($booking->payment_proof);
+            }
+
+            $path = $request->file('payment_proof')->store('payments', 'public');
+
+            $booking->update([
+                'payment_proof' => $path,
+                'payment_status' => 'pending',
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Bukti pembayaran berhasil diupload, menunggu konfirmasi admin.',
+                'data' => $booking->fresh()
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error('UserBookingController@uploadPayment error', [
+                'booking_id' => $booking->id,
+                'user_id' => auth()->id(),
+                'message' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat upload pembayaran.'
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /user/bookings/{booking}/cancel
+     * Batalkan booking user
+     */
+    public function cancel(Booking $booking)
+    {
+        try {
+            if ($booking->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Booking tidak ditemukan'
+                ], 404);
+            }
+
+            if (in_array($booking->payment_status, ['paid'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Booking yang sudah dibayar tidak dapat dibatalkan'
+                ], 422);
+            }
+
+            // Kembalikan status schedule
+            foreach ($booking->items as $item) {
+                $item->schedule->update(['status' => 'available']);
+            }
+
+            $booking->update(['payment_status' => 'cancelled']);
+            $booking->delete(); // soft delete
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Booking berhasil dibatalkan'
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error('UserBookingController@cancel error', [
+                'booking_id' => $booking->id,
+                'user_id' => auth()->id(),
+                'message' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membatalkan booking'
+            ], 500);
+        }
+    }
+
+    /**
+     * DELETE /user/bookings/{booking}
+     * Hapus booking (soft delete)
+     */
+    public function destroy(Booking $booking)
+    {
+        try {
+            if ($booking->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Booking tidak ditemukan'
+                ], 404);
+            }
+
+            // Hapus bukti pembayaran jika ada
+            if ($booking->payment_proof) {
+                Storage::disk('public')->delete($booking->payment_proof);
+            }
+
+            $booking->delete(); // soft delete
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Booking berhasil dihapus'
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error('UserBookingController@destroy error', [
+                'booking_id' => $booking->id,
+                'user_id' => auth()->id(),
+                'message' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menghapus booking'
             ], 500);
         }
     }

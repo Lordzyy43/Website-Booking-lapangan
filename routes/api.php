@@ -8,7 +8,7 @@ use App\Http\Controllers\{
     ScheduleController,
     UserBookingController, 
     AdminBookingController,
-    ReportController
+    ReportController,
 };
 
 /*
@@ -21,90 +21,91 @@ use App\Http\Controllers\{
 
 /*
 |--------------------------------------------------------------------------
-| PUBLIC ROUTES (Bisa Diakses Tanpa Token/Login)
+| PUBLIC ROUTES (Tanpa Login)
 |--------------------------------------------------------------------------
 */
-// 1. Auth Dasar
+// Auth
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
-// 2. Endpoint Eksplorasi (Digunakan Frontend Home & Detail Page)
-// Improve: Penambahan Group untuk mempermudah maintenance URL
+// Explore
 Route::prefix('explore')->group(function () {
     Route::get('/venues', [VenueController::class, 'index']);
     Route::get('/venues/{venue}', [VenueController::class, 'show']);
-    
-    // User butuh melihat jadwal yang tersedia sebelum login/booking
+
+    Route::get('/fields', [FieldController::class, 'index']);
     Route::get('/fields/{field}/schedules', [ScheduleController::class, 'availableSchedules']);
 });
 
 /*
 |--------------------------------------------------------------------------
-| PROTECTED ROUTES (Harus Login & Membawa Bearer Token)
+| PROTECTED ROUTES (Harus Login)
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
 
-    // Info Profile & Logout
+    // Profile & Logout
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
     /*
     |--------------------------------------------------------------------------
-    | ROLE: USER (Customer)
+    | USER (Customer)
     |--------------------------------------------------------------------------
     */
     Route::prefix('user')->middleware('role:user')->group(function () {
-        // Management Booking User
-        Route::get('/bookings', [UserBookingController::class, 'index']);
-        Route::post('/bookings', [UserBookingController::class, 'store']);
-        Route::get('/bookings/{booking}', [UserBookingController::class, 'show']);
+        // Booking
+        Route::get('/bookings', [UserBookingController::class, 'index']);      // list my bookings (sebelumnya /my)
+        Route::post('/bookings', [UserBookingController::class, 'store']);     // create booking
+        Route::get('/bookings/{booking}', [UserBookingController::class, 'show']); // detail booking
+        Route::delete('/bookings/{booking}', [UserBookingController::class, 'destroy']); // delete booking
         
-        // Fitur Tambahan: Upload Bukti Bayar & Pembatalan
+        // Payment & Cancel
         Route::post('/bookings/{booking}/upload-payment', [UserBookingController::class, 'uploadPayment']);
         Route::post('/bookings/{booking}/cancel', [UserBookingController::class, 'cancel']);
     });
 
     /*
     |--------------------------------------------------------------------------
-    | ROLE: ADMIN (Pengelola Lapangan)
+    | ADMIN (Pengelola Lapangan)
     |--------------------------------------------------------------------------
     */
     Route::prefix('admin')->middleware('role:admin')->group(function () {
-        // Kelola Venue
+
+        // Venue
         Route::get('/venues', [VenueController::class, 'index']);
         Route::post('/venues', [VenueController::class, 'store']);
         Route::get('/venues/{venue}', [VenueController::class, 'show']);
         Route::put('/venues/{venue}', [VenueController::class, 'update']);
         Route::delete('/venues/{venue}', [VenueController::class, 'destroy']);
 
-        // Kelola Field
+        // Field
         Route::get('/fields', [FieldController::class, 'index']);
         Route::post('/fields', [FieldController::class, 'store']);
         Route::get('/fields/{field}', [FieldController::class, 'show']);
         Route::put('/fields/{field}', [FieldController::class, 'update']);
         Route::delete('/fields/{field}', [FieldController::class, 'destroy']);
 
-        // Kelola Schedule (Pengaturan Waktu Main)
+        // Schedule
         Route::get('/schedules', [ScheduleController::class, 'index']);
-        Route::post('/schedules/generate', [ScheduleController::class, 'generate']);
         Route::post('/schedules', [ScheduleController::class, 'store']);
+        Route::post('/schedules/generate', [ScheduleController::class, 'generate']);
         Route::put('/schedules/{schedule}', [ScheduleController::class, 'update']);
         Route::delete('/schedules/{schedule}', [ScheduleController::class, 'destroy']);
-        
-        // Konfirmasi & Kelola Semua Booking (AdminBookingController)
-        Route::get('/bookings', [AdminBookingController::class, 'index']);
+
+        // Booking Admin
+        Route::get('/bookings', [AdminBookingController::class, 'index']);                 // all bookings
         Route::post('/bookings/{booking}/confirm', [AdminBookingController::class, 'confirm']);
         Route::post('/bookings/{booking}/reject', [AdminBookingController::class, 'reject']);
     });
 
     /*
     |--------------------------------------------------------------------------
-    | ROLE: OWNER (Laporan & Analytics)
+    | OWNER (Laporan & Analytics)
     |--------------------------------------------------------------------------
     */
     Route::prefix('owner')->middleware('role:owner')->group(function () {
         Route::get('/dashboard-stats', [ReportController::class, 'dashboard']);
-        Route::get('/reports/income', [ReportController::class, 'incomeReport']); 
+        Route::get('/reports/income', [ReportController::class, 'incomeReport']);
     });
 });

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB; // <--- WAJIB TAMBAHKAN INI
 
 class Booking extends Model
 {
@@ -17,11 +18,14 @@ class Booking extends Model
         'payment_status',
         'payment_token',
         'expired_at',
+        'payment_proof',
     ];
 
-    /**
-     * Status pembayaran yang valid
-     */
+    public function getRouteKeyName()
+    {
+        return 'booking_code';
+    }
+
     public const PAYMENT_STATUSES = [
         'unpaid',
         'paid',
@@ -36,9 +40,29 @@ class Booking extends Model
 
     /*
     |--------------------------------------------------------------------------
-    | Status Helpers
+    | Status Helpers & Real-time Logic
     |--------------------------------------------------------------------------
     */
+
+    /**
+     * Logic Otomatis: Update status booking & kunci jadwal lapangan
+     */
+    public function markAsPaid()
+    {
+        return DB::transaction(function () {
+            // 1. Update header booking jadi Lunas
+            $this->update(['payment_status' => 'paid']);
+
+            // 2. Cari semua item (jadwal) yang dipesan di booking ini, lalu kunci statusnya
+            foreach ($this->items as $item) {
+                if ($item->schedule) {
+                    $item->schedule->update(['status' => 'booked']);
+                }
+            }
+            
+            return $this;
+        });
+    }
 
     public function isPaid(): bool
     {
