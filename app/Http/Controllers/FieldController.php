@@ -6,6 +6,8 @@ use App\Models\Field;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 
 class FieldController extends Controller
 {
@@ -13,100 +15,154 @@ class FieldController extends Controller
      * ==========================================================
      * ACCESS CONTROL
      * ==========================================================
-     * - auth:sanctum   : semua method
-     * - role:admin     : CRUD write
-     * - user/owner     : read-only (index, show)
      */
     public function __construct()
     {
         $this->middleware('auth:sanctum');
-        $this->middleware('role:admin')->except(['index', 'show']);
+        $this->middleware('role:admin')->except([
+            'index',
+            'show',
+            'explore',
+        ]);
     }
 
-    // ==========================================================
-    // GET /fields
-    // List all fields (ALL ROLES)
-    // ==========================================================
-   public function index()
+    /**
+     * ==========================================================
+     * RESPONSE FORMATTER (SATU PINTU)
+     * ==========================================================
+     */
+    private function formatField(Field $field): array
+    {
+        return [
+            'id'     => $field->id,
+            'name'   => $field->name,
+            'type'   => $field->type,
+            'price'  => $field->price_per_hour,
+            'image'  => $field->image
+            ? asset('storage/' . $field->image)
+            : null,
+            'status' => $field->is_active ? 'active' : 'inactive',
+            'venue'  => $field->relationLoaded('venue') && $field->venue
+                ? [
+                    'id'   => $field->venue->id,
+                    'name' => $field->venue->name,
+                ]
+                : null,
+        ];
+    }
+
+    /**
+     * ==========================================================
+     * GET /fields
+     * List all fields (ALL ROLES)
+     * ==========================================================
+     */
+    public function index()
     {
         try {
-            $fields = Field::with('venue')->get(); 
-            $data = $fields->map(function ($field) {
-                return [
-                    'id'             => $field->id,
-                    'name'           => $field->name,
-                    'type'           => $field->type, // Pastikan dikirim agar tidak hilang
-                    'venue'          => [
-                        'id'         => $field->venue->id,
-                        'name'       => $field->venue->name,
-                        'address'    => $field->venue->address,
-                    ],
-                    // MATCH-KAN DISINI
-                    'price'          => $field->price_per_hour, 
-                    'status'         => $field->is_active ? 'active' : 'inactive', 
-                ];
-            });
+            $fields = Field::with('venue:id,name')->get();
 
             return response()->json([
                 'success' => true,
-                'data'    => $data,
-            ], 200);
+                'data' => $fields->map(
+                    fn ($f) => $this->formatField($f)
+                ),
+            ]);
+
         } catch (\Throwable $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+            Log::error('Field index error', ['message' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil data field',
+            ], 500);
         }
     }
 
-
-
-    // ==========================================================
-    // GET /fields/{field}
-    // Detail field (ALL ROLES)
-    // ==========================================================
-    public function show(Field $field)
+    /**
+     * ==========================================================
+     * GET /fields/explore
+     * Public explore (ACTIVE ONLY)
+     * ==========================================================
+     */
+    public function explore()
     {
+        $fields = Field::where('is_active', true)
+            ->with('venue:id,name')
+            ->get();
+
         return response()->json([
             'success' => true,
-            'data' => $field->load('venue'),
-        ], 200);
+            'data' => $fields->map(
+                fn ($f) => $this->formatField($f)
+            ),
+        ]);
     }
 
-    // ==========================================================
-    // POST /fields
-    // Create field (ADMIN ONLY)
-    // ==========================================================
+    /**
+     * ==========================================================
+     * GET /fields/{field}
+     * Detail field (ALL ROLES)
+     * ==========================================================
+     */
+    public function show(Field $field)
+    {
+        $field->load('venue:id,name');
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->formatField($field),
+        ]);
+    }
+
+    /**
+     * ==========================================================
+     * POST /fields
+     * Create field (ADMIN ONLY)
+     * multipart/form-data
+     * ==========================================================
+     */
     public function store(Request $request)
     {
         $validated = $request->validate([
             'venue_id'       => 'required|exists:venues,id',
             'name'           => 'required|string|max:255',
-            'type'           => 'required|in:' . implode(',', Field::TYPES),
+            'type'           => ['required', Rule::in(Field::TYPES)],
             'price_per_hour' => 'required|numeric|min:0',
+            'image'          => 'nullable|image|mimes:jpg,jpeg,png|max:2048',
             'is_active'      => 'boolean',
         ]);
 
         try {
-            $field = Field::create([
-                'venue_id'       => $validated['venue_id'],
-                'name'           => $validated['name'],
-                'type'           => $validated['type'],
-                'price_per_hour' => $validated['price_per_hour'],
-                'is_active'      => $validated['is_active'] ?? true,
-            ]);
+            if ($request->hasFile('image')) {
+                $validated['image'] = $request
+                    ->file('image')
+                    ->store('fields', 'public');
+            }
+
+            $field = Field::create($validated);
+            $field->load('venue:id,name');
 
             return response()->json([
                 'success' => true,
-                'data' => $field,
+                'data' => $this->formatField($field),
             ], 201);
 
         } catch (QueryException $e) {
-            Log::error('Field store DB error', ['error' => $e->errorInfo]);
+            Log::error('Field store DB error', [
+                'error' => $e->errorInfo,
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal menyimpan field ke database',
             ], 500);
 
         } catch (\Throwable $e) {
-            Log::error('Field store error', ['message' => $e->getMessage()]);
+            Log::error('Field store error', [
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat membuat field',
@@ -114,37 +170,63 @@ class FieldController extends Controller
         }
     }
 
-    // ==========================================================
-    // PUT /fields/{field}
-    // Update field (ADMIN ONLY)
-    // ==========================================================
+    /**
+     * ==========================================================
+     * PUT /fields/{field}
+     * Update field (ADMIN ONLY)
+     * multipart/form-data
+     * ==========================================================
+     */
     public function update(Request $request, Field $field)
     {
         $validated = $request->validate([
             'venue_id'       => 'required|exists:venues,id',
             'name'           => 'required|string|max:255',
-            'type'           => 'required|in:' . implode(',', Field::TYPES),
+            'type'           => ['required', Rule::in(Field::TYPES)],
             'price_per_hour' => 'required|numeric|min:0',
+            'image'          => 'nullable|image|mimes:jpg,jpeg,png|max:2048',
             'is_active'      => 'boolean',
         ]);
 
         try {
+            if ($request->hasFile('image')) {
+                if (
+                    $field->image &&
+                    Storage::disk('public')->exists($field->image)
+                ) {
+                    Storage::disk('public')->delete($field->image);
+                }
+
+                $validated['image'] = $request
+                    ->file('image')
+                    ->store('fields', 'public');
+            }
+
             $field->update($validated);
+            $field->load('venue:id,name');
 
             return response()->json([
                 'success' => true,
-                'data' => $field,
-            ], 200);
+                'data' => $this->formatField($field),
+            ]);
 
         } catch (QueryException $e) {
-            Log::error('Field update DB error', ['field_id' => $field->id, 'error' => $e->errorInfo]);
+            Log::error('Field update DB error', [
+                'field_id' => $field->id,
+                'error' => $e->errorInfo,
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal memperbarui field',
             ], 500);
 
         } catch (\Throwable $e) {
-            Log::error('Field update error', ['field_id' => $field->id, 'message' => $e->getMessage()]);
+            Log::error('Field update error', [
+                'field_id' => $field->id,
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat memperbarui field',
@@ -152,10 +234,12 @@ class FieldController extends Controller
         }
     }
 
-    // ==========================================================
-    // DELETE /fields/{field}
-    // Delete field (ADMIN ONLY)
-    // ==========================================================
+    /**
+     * ==========================================================
+     * DELETE /fields/{field}
+     * Soft delete (ADMIN ONLY)
+     * ==========================================================
+     */
     public function destroy(Field $field)
     {
         try {
@@ -164,10 +248,14 @@ class FieldController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Field berhasil dihapus',
-            ], 200);
+            ]);
 
         } catch (\Throwable $e) {
-            Log::error('Field delete error', ['field_id' => $field->id, 'message' => $e->getMessage()]);
+            Log::error('Field delete error', [
+                'field_id' => $field->id,
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal menghapus field',

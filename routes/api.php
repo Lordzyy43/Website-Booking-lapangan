@@ -33,13 +33,11 @@ Route::prefix('explore')->group(function () {
     Route::get('/venues', [VenueController::class, 'index']);
     Route::get('/venues/{venue}', [VenueController::class, 'show']);
 
-    Route::get('/fields', [FieldController::class, 'index']);
+    Route::get('/fields', [FieldController::class, 'explore']);
     Route::get('/fields/{field}/schedules', [ScheduleController::class, 'availableSchedules']);
 });
 
-/*
-|--------------------------------------------------------------------------
-| PROTECTED ROUTES (Harus Login)
+/*| PROTECTED ROUTES (Harus Login)
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
