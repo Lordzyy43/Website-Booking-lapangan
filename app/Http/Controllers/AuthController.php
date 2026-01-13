@@ -69,6 +69,35 @@ class AuthController extends Controller
         ]);
     }
 
+
+    // updated
+    public function update(Request $request)
+    {
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'name'     => 'sometimes|string|max:255',
+            'password' => 'sometimes|min:6|confirmed',
+        ]);
+
+        if (isset($validated['name'])) {
+            $user->name = $validated['name'];
+        }
+
+        if (isset($validated['password'])) {
+            $user->password = Hash::make($validated['password']);
+        }
+
+        $user->save();
+
+        return response()->json([
+            'status'  => 'success',
+            'message' => 'Profile updated successfully',
+            'user'    => $user
+        ]);
+    }
+
+
     /**
      * LOGOUT
      */
