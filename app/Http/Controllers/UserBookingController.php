@@ -111,10 +111,15 @@ class UserBookingController extends Controller
      * GET /user/bookings/{booking}
      * Detail booking by ID
      */
-    public function show(Booking $booking)
+   public function show($bookingCode)
     {
         try {
-            if ($booking->user_id !== auth()->id()) {
+            $booking = Booking::with('items.schedule.field.venue')
+                ->where('booking_code', $bookingCode)
+                ->where('user_id', auth()->id())
+                ->first();
+
+            if (!$booking) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Booking tidak ditemukan'
@@ -123,11 +128,16 @@ class UserBookingController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $booking->load('items.schedule.field.venue')
+                'data' => $booking
             ], 200);
 
         } catch (\Exception $e) {
-            Log::error("UserBookingController@show error: " . $e->getMessage());
+            Log::error('UserBookingController@show error', [
+                'booking_code' => $bookingCode,
+                'user_id' => auth()->id(),
+                'message' => $e->getMessage()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengambil detail booking'

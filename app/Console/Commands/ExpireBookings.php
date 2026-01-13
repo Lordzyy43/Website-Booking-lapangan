@@ -34,10 +34,7 @@ class ExpireBookings extends Command
                     $schedule = $item->schedule;
 
                     if ($schedule && $schedule->status !== 'booked') {
-                        $schedule->update([
-                            'status'       => 'available',
-                            'locked_until' => null,
-                        ]);
+                        $schedule->unlock();
                     }
                 }
             }

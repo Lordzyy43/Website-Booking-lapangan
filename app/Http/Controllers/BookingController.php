@@ -133,7 +133,7 @@ class BookingController extends Controller
                 'booking_code'   => 'BK-' . Str::uuid(),
                 'total_amount'   => 0,
                 'payment_status' => 'unpaid',
-                'expired_at'     => now()->addMinutes(30),
+                'expired_at'     => now()->addMinutes(5),
             ]);
 
             return response()->json([
