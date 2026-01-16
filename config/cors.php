@@ -1,15 +1,21 @@
 <?php
 
 return [
-    /*
-    | Tambahkan 'login' ke dalam paths agar diizinkan
-    */
-    'paths' => ['api/*', 'login', 'logout', 'sanctum/csrf-cookie'],
+
+    'paths' => [
+        'api/*',
+        'login',
+        'logout',
+        'sanctum/csrf-cookie'
+    ],
 
     'allowed_methods' => ['*'],
 
-    // Lebih aman dan stabil sebutkan langsung alamat frontendmu
-    'allowed_origins' => ['http://localhost:5173'], 
+    // Izinkan DEV + PROD
+    'allowed_origins' => [
+        'http://localhost:5173',
+        'https://sportcenter.biz.id',
+    ],
 
     'allowed_origins_patterns' => [],
 
@@ -19,6 +25,6 @@ return [
 
     'max_age' => 0,
 
-    // Set ke true jika kamu butuh kirim cookie/session (biasanya iya untuk login)
+    // WAJIB true kalau pakai session / sanctum / cookie
     'supports_credentials' => true,
 ];

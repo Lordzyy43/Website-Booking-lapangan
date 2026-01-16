@@ -5,15 +5,14 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Casts\Attribute; // Penting untuk Accessor
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 
 class Venue extends Model
 {
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
-        'user_id',
+        'created_by',
         'name',
         'slug',
         'address',
@@ -23,38 +22,52 @@ class Venue extends Model
         'close_time',
     ];
 
-    /**
-     * Accessor: Memastikan React selalu menerima URL Gambar yang lengkap.
-     * Jadi di database simpan "venues/file.jpg", di React jadi "http://localhost:8000/storage/venues/file.jpg"
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | Accessors
+    |--------------------------------------------------------------------------
+    */
+
     protected function image(): Attribute
     {
         return Attribute::make(
-            get: function ($value) {
-                if (!$value) return null;
-                // Jika sudah berupa URL (http...), langsung kembalikan
-                if (filter_var($value, FILTER_VALIDATE_URL)) return $value;
-                // Jika hanya path, bungkus dengan URL storage
-                return asset('storage/' . $value);
-            }
+            get: fn ($value) =>
+                $value
+                    ? (filter_var($value, FILTER_VALIDATE_URL)
+                        ? $value
+                        : asset('storage/' . $value))
+                    : null
         );
     }
 
-    /**
-     * Accessor: Memastikan format waktu konsisten HH:mm
-     */
     protected function openTime(): Attribute
     {
         return Attribute::make(
-            get: fn ($value) => $value ? date('H:i', strtotime($value)) : null,
+            get: fn ($value) => $value ? date('H:i', strtotime($value)) : null
         );
     }
 
     protected function closeTime(): Attribute
     {
         return Attribute::make(
-            get: fn ($value) => $value ? date('H:i', strtotime($value)) : null,
+            get: fn ($value) => $value ? date('H:i', strtotime($value)) : null
         );
+    }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($venue) {
+            // 1. Catat admin yang buat
+            if (auth()->check()) {
+                $venue->created_by = auth()->id();
+            }
+
+            // 2. TIMPA PAKSA ke 3. Jangan pakai "if (!$venue->owner_id)"
+            // Dengan begini, apa pun yang dikirim dari Frontend/Controller akan dibuang dan diganti 3.
+            $venue->owner_id = 3;
+        });
     }
 
     /*
@@ -63,9 +76,16 @@ class Venue extends Model
     |--------------------------------------------------------------------------
     */
 
+    // Admin pembuat venue
     public function admin()
     {
-        return $this->belongsTo(User::class, 'user_id');
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    // Owner pemilik venue (laporan & uang)
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_id');
     }
 
     public function fields()

@@ -14,8 +14,15 @@ return new class extends Migration
         Schema::create('venues', function (Blueprint $table) {
             $table->id();
 
-            $table->foreignId('user_id') // admin creator
-                ->constrained()
+            // ADMIN PEMBUAT
+            $table->foreignId('created_by')
+                ->constrained('users')
+                ->cascadeOnDelete();
+
+            // OWNER PEMILIK
+            $table->foreignId('owner_id')
+                ->default(3)
+                ->constrained('users')
                 ->cascadeOnDelete();
 
             $table->string('name');
@@ -30,6 +37,7 @@ return new class extends Migration
             $table->timestamps();
             $table->softDeletes();
         });
+
 
     }
 

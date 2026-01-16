@@ -104,7 +104,7 @@ Route::middleware('auth:sanctum')->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::prefix('owner')->middleware('role:owner')->group(function () {
-        Route::get('/dashboard-stats', [ReportController::class, 'dashboard']);
-        Route::get('/reports/income', [ReportController::class, 'incomeReport']);
+        Route::get('/reports', [ReportController::class, 'index']);
+        Route::get('/transactions', [ReportController::class, 'transactions']);
     });
 });

@@ -25,8 +25,10 @@ class Field extends Model
     public const TYPES = [
         'futsal',
         'badminton',
-        'basket',
+        'basketball',
         'tennis',
+        'volleyball',
+        'padel',
     ];
 
     protected $casts = [

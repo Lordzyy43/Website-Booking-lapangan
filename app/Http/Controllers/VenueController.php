@@ -50,6 +50,7 @@ class VenueController extends Controller
         // Validasi input dari frontend
         $validated = $request->validate([
             'name'        => 'required|string|max:255',
+            'owner_id'   => 'required|exists:users,id',
             'address'     => 'required|string',
             'description' => 'nullable|string',
             'open_time'   => 'required', // Format jam dikontrol di Model Accessor/React
@@ -69,7 +70,8 @@ class VenueController extends Controller
             }
 
             $venue = Venue::create([
-                'user_id'     => auth()->id(), // Mengambil ID user yang sedang login
+                'created_by'  => auth()->id(), // Mengambil ID user yang sedang login
+                'owner_id'    => $validated['owner_id'],
                 'name'        => $validated['name'],
                 'slug'        => $slug,
                 'address'     => $validated['address'],
@@ -98,6 +100,7 @@ class VenueController extends Controller
         // Catatan: Karena menggunakan FormData di React, kadang file dikirim via POST dengan _method=PUT
         $validated = $request->validate([
             'name'        => 'required|string|max:255',
+            'owner_id'   => 'required|exists:users,id',
             'address'     => 'required|string',
             'description' => 'nullable|string',
             'open_time'   => 'required',
@@ -119,6 +122,7 @@ class VenueController extends Controller
             // Update data lainnya
             $venue->update([
                 'name'        => $validated['name'],
+                'owner_id'   => $validated['owner_id'],
                 // Update slug jika nama berubah
                 'slug'        => $this->generateUniqueSlug($validated['name'], $venue->id),
                 'address'     => $validated['address'],

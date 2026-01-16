@@ -63,70 +63,80 @@ class ScheduleController extends Controller
     public function availableSchedules($fieldId, Request $request)
     {
         $request->validate([
-            'date' => 'required|date',
-            'start_hour' => 'nullable|integer|min:0|max:23',
-            'end_hour'   => 'nullable|integer|min:0|max:23',
+            'date' => 'required|date|after_or_equal:today',
         ]);
 
-        $date = $request->date;
-        $startHour = $request->start_hour ?? 7;   // default 07:00
-        $endHour   = $request->end_hour ?? 22;    // default 22:00
-
         try {
-            // Ambil jadwal yang sudah ada beserta relasi field & venue
-            $schedules = Schedule::with('field.venue')
-                ->where('field_id', $fieldId)
-                ->whereDate('start_time', $date)
-                ->orderBy('start_time')
-                ->get();
+            $field = \App\Models\Field::with('venue')->findOrFail($fieldId);
+            $venue = $field->venue;
+            $date = $request->date;
 
-            // Jika belum ada jadwal, generate slot kosong
-            if ($schedules->isEmpty()) {
+            $startHour = (int) date('H', strtotime($venue->open_time ?? '07:00:00'));
+            $endHour   = (int) date('H', strtotime($venue->close_time ?? '22:00:00'));
+
+            // 1. Ambil jadwal yang sudah ada di DB
+            $existingSchedules = Schedule::where('field_id', $fieldId)
+                ->whereDate('start_time', $date)
+                ->get()
+                ->keyBy(fn($item) => $item->start_time->format('H:i'));
+
+            // 2. LOGIKA OTOMATIS: Jika DB kosong untuk tanggal ini, kita isi sekarang juga!
+            if ($existingSchedules->isEmpty()) {
+                $newSlots = [];
                 for ($hour = $startHour; $hour < $endHour; $hour++) {
                     $startTime = sprintf('%s %02d:00:00', $date, $hour);
                     $endTime   = sprintf('%s %02d:00:00', $date, $hour + 1);
 
-                    $slot = Schedule::create([
+                    $newSlots[] = [
                         'field_id'   => $fieldId,
                         'start_time' => $startTime,
                         'end_time'   => $endTime,
                         'status'     => 'available',
-                    ]);
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+                // Simpan ke DB agar dapet ID asli
+                Schedule::insert($newSlots);
 
-                    // reload relasi agar price & venue bisa diakses
-                    $slot->load('field.venue');
-                    $schedules->push($slot);
+                // Ambil ulang data yang baru saja di-insert
+                $existingSchedules = Schedule::where('field_id', $fieldId)
+                    ->whereDate('start_time', $date)
+                    ->get()
+                    ->keyBy(fn($item) => $item->start_time->format('H:i'));
+            }
+
+            // 3. Mapping hasil akhir (Sekarang ID DIJAMIN tidak NULL)
+            $finalSchedules = [];
+            for ($hour = $startHour; $hour < $endHour; $hour++) {
+                $timeKey = sprintf('%02d:00', $hour);
+                
+                if ($existingSchedules->has($timeKey)) {
+                    $slot = $existingSchedules->get($timeKey);
+                    $finalSchedules[] = [
+                        'id'         => $slot->id, // ID NYATA DARI DB
+                        'start_time' => $slot->start_time->format('H:i'),
+                        'end_time'   => $slot->end_time->format('H:i'),
+                        'status'     => $slot->status,
+                        'price'      => $field->price_per_hour,
+                        'is_virtual' => false
+                    ];
                 }
             }
 
-            // Format response bersih termasuk price dari field
-            $response = $schedules->map(function ($slot) {
-                return [
-                    'id'         => $slot->id,
-                    'start_time' => $slot->start_time->format('H:i'),
-                    'end_time'   => $slot->end_time->format('H:i'),
-                    'status'     => $slot->status,
-                    'price'      => $slot->field->price_per_hour ?? 0, // <-- tambahan price
-                    'is_locked'  => $slot->isLocked(),
-                    'is_booked'  => $slot->isBooked(),
-                    'can_lock'   => $slot->canBeLocked(),
-                ];
-            });
-
             return response()->json([
                 'success' => true,
-                'data' => $response,
+                'field_name' => $field->name,
+                'venue_name' => $venue->name,
+                'operating_hours' => "$venue->open_time - $venue->close_time",
+                'data' => $finalSchedules,
             ], 200);
 
         } catch (\Throwable $e) {
-            \Log::error('Fetch available schedules error', ['message' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Gagal mengambil jadwal',
-            ], 500);
+            Log::error('Available Schedules Error', ['msg' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
-
 
 
     // ==========================================================

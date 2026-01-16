@@ -18,7 +18,7 @@ class FieldController extends Controller
      */
     public function __construct()
     {
-        $this->middleware('auth:sanctum');
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'explore']);
         $this->middleware('role:admin')->except([
             'index',
             'show',
@@ -88,7 +88,8 @@ class FieldController extends Controller
     public function explore()
     {
         $fields = Field::where('is_active', true)
-            ->with('venue:id,name')
+            ->with('venue:id,name,address')
+            ->latest()
             ->get();
 
         return response()->json([

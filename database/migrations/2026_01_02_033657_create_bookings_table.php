@@ -24,6 +24,7 @@ return new class extends Migration
 
           $table->enum('payment_status', [
               'unpaid',
+              'pending',
               'paid',
               'expired',
               'cancelled',
