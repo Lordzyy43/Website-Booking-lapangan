@@ -54,56 +54,72 @@ class UserBookingController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'schedule_ids' => 'required|array|min:1',
-            'schedule_ids.*' => 'exists:schedules,id',
+            'field_id' => 'required|exists:fields,id',
+            'slots'    => 'required|array|min:1',
+            'slots.*.start_time' => 'required|date_format:Y-m-d H:i:s',
+            'slots.*.end_time'   => 'required|date_format:Y-m-d H:i:s|after:slots.*.start_time',
         ]);
 
         try {
-            return DB::transaction(function () use ($request) {
-                $schedules = Schedule::with('field')
-                    ->whereIn('id', $request->schedule_ids)
-                    ->lockForUpdate()
-                    ->get();
+            // Ambil data field sekali saja (Efisiensi)
+            $field = \App\Models\Field::findOrFail($request->field_id);
 
-                foreach ($schedules as $s) {
-                    if ($s->status !== 'available') {
-                        return response()->json([
-                            'success' => false,
-                            'message' => "Slot jam " . date('H:i', strtotime($s->start_time)) . " sudah tidak tersedia."
-                        ], 422);
+            return DB::transaction(function () use ($request, $field) {
+                $bookedSchedules = [];
+                $totalAmount = 0;
+
+                foreach ($request->slots as $slot) {
+                    // 1. Dapatkan atau buat slot
+                    $schedule = Schedule::firstOrCreate(
+                        [
+                            'field_id'   => $field->id,
+                            'start_time' => $slot['start_time'],
+                        ],
+                        [
+                            'end_time'   => $slot['end_time'],
+                            'status'     => 'available'
+                        ]
+                    );
+
+                    // 2. KUNCI DATA (Locking) untuk mencegah double booking
+                    $schedule = Schedule::where('id', $schedule->id)->lockForUpdate()->first();
+                    
+                    if ($schedule->status !== 'available') {
+                        // Pakai throw agar DB::transaction otomatis Rollback
+                        throw new \Exception("Jam " . date('H:i', strtotime($schedule->start_time)) . " baru saja dipesan orang lain.");
                     }
+
+                    $bookedSchedules[] = $schedule;
+                    $totalAmount += $field->price_per_hour;
                 }
 
-                $totalAmount = $schedules->sum(fn($s) => $s->field->price_per_hour);
-
+                // 3. Buat Header Booking dengan Expired 5 Menit
                 $booking = Booking::create([
-                    'user_id' => auth()->id(),
-                    'booking_code' => 'BK-' . strtoupper(Str::random(8)),
-                    'total_amount' => $totalAmount,
+                    'user_id'        => auth()->id(),
+                    'booking_code'   => 'BK-' . strtoupper(Str::random(8)),
+                    'total_amount'   => $totalAmount,
                     'payment_status' => 'unpaid',
-                    'expired_at' => now()->addHours(2),
+                    'expired_at'     => now()->addMinutes(5),
                 ]);
 
-                foreach ($schedules as $s) {
+                // 4. Hubungkan Item dan Tandai "Booked"
+                foreach ($bookedSchedules as $s) {
                     $booking->items()->create([
                         'schedule_id' => $s->id,
-                        'price' => $s->field->price_per_hour,
+                        'price'       => $field->price_per_hour,
                     ]);
                     $s->update(['status' => 'booked']);
                 }
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Booking berhasil dibuat!',
-                    'data' => $booking->load('items.schedule.field.venue')
+                    'message' => 'Booking berhasil! Segera bayar dalam 5 menit.',
+                    'data'    => $booking->load('items.schedule.field.venue')
                 ], 201);
             });
         } catch (\Exception $e) {
-            Log::error("UserBookingController@store error: " . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Terjadi kesalahan sistem saat memproses booking.'
-            ], 500);
+            // Response 422 agar React bisa menangkap pesan error spesifik
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         }
     }
 

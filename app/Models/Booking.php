@@ -38,6 +38,8 @@ class Booking extends Model
         'expired_at'   => 'datetime',
     ];
 
+    protected $appends = ['payment_proof_url'];
+
     /*
     |--------------------------------------------------------------------------
     | Status Helpers & Real-time Logic
@@ -62,6 +64,12 @@ class Booking extends Model
             
             return $this;
         });
+    }
+
+    public function getPaymentProofUrlAttribute()
+    {
+        if (!$this->payment_proof) return null;
+        return asset('storage/' . $this->payment_proof);
     }
 
     public function isPaid(): bool

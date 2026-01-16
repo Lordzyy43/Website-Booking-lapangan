@@ -23,8 +23,10 @@ return new class extends Migration
             $table->enum('type', [
                 'futsal',
                 'badminton',
-                'basket',
+                'basketball',
                 'tennis',
+                'volleyball',
+                'padel',
             ]);
 
             // harga dasar per jam
